@@ -1,0 +1,25 @@
+#!/bin/zsh
+# Wrapper around `swift` for Macs with only the Command Line Tools (no Xcode):
+# - Swift Testing ships in CLT, but SwiftPM doesn't add its framework paths.
+# - Some CLT installs carry stale 2024 PackageDescription *.private.swiftinterface files
+#   that break manifest linking; if present, build against a cleaned copy.
+# With Xcode selected (e.g. CI), this is a plain pass-through to `swift`.
+cmd=$1; shift
+CLT=/Library/Developer/CommandLineTools
+if [[ $(xcode-select -p 2>/dev/null) != $CLT ]]; then
+  exec swift $cmd "$@"
+fi
+if [[ -n $(find $CLT/usr/lib/swift/pm/ManifestAPI -name "*.private.swiftinterface" 2>/dev/null) ]]; then
+  LIBS=${XDG_CACHE_HOME:-$HOME/.cache}/glm-mcp/swiftpm-libs
+  if [[ ! -d $LIBS/ManifestAPI ]]; then
+    mkdir -p $LIBS && cp -R $CLT/usr/lib/swift/pm/* $LIBS/
+    find $LIBS -name "*.private.swiftinterface" -delete
+  fi
+  export SWIFTPM_CUSTOM_LIBS_DIR=$LIBS
+fi
+if [[ $cmd == test ]]; then
+  F=$CLT/Library/Developer/Frameworks
+  exec swift test -Xswiftc -F -Xswiftc $F -Xlinker -F -Xlinker $F \
+    -Xlinker -rpath -Xlinker $F -Xlinker -rpath -Xlinker $CLT/Library/Developer/usr/lib "$@"
+fi
+exec swift $cmd "$@"
