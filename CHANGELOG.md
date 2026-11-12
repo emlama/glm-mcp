@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 — 2026-11-12
+
+First published release. Same as 0.1.0, whose release build failed; the universal app is now
+built per architecture and merged with `lipo`.
+
 ## 0.1.0 — 2026-11-12
 
 First release.

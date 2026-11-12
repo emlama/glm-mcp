@@ -1,19 +1,32 @@
 #!/bin/zsh
 # Builds "build/GLM MCP.app" (release, ad-hoc signed).
 #   --install    also copy it to ~/Applications (quitting a running copy first)
-#   --universal  build for arm64 and x86_64 (requires Xcode)
+#   --universal  build for arm64 and x86_64
 set -euo pipefail
 cd "${0:A:h}/.."
-install=0; archs=()
+install=0; universal=0
 for arg in "$@"; do
   case $arg in
     --install) install=1 ;;
-    --universal) archs=(--arch arm64 --arch x86_64) ;;
+    --universal) universal=1 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
-scripts/swiftw build -c release --product GLMApp $archs
-BIN=$(scripts/swiftw build -c release --product GLMApp $archs --show-bin-path)/GLMApp
+if (( universal )); then
+  # One build per architecture with the native build system, then lipo. (`--arch a --arch b`
+  # switches to Xcode's build system, which rejects some dependencies' manifests.)
+  bins=()
+  for triple in arm64-apple-macosx14.0 x86_64-apple-macosx14.0; do
+    scripts/swiftw build -c release --product GLMApp --triple $triple
+    bins+=("$(scripts/swiftw build -c release --product GLMApp --triple $triple --show-bin-path)/GLMApp")
+  done
+  mkdir -p build
+  BIN=build/GLMApp-universal
+  lipo -create -output $BIN $bins
+else
+  scripts/swiftw build -c release --product GLMApp
+  BIN=$(scripts/swiftw build -c release --product GLMApp --show-bin-path)/GLMApp
+fi
 APP="build/GLM MCP.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
