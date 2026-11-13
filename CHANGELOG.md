@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- New tools `set_laser_pointer` and `set_backlight` (on/off). Both wait for the laser to acknowledge.
+- `trigger_measurement` confirmed working on the original GLM 50 C.
+- Detects a laser that connects but stays silent (seen after a dropped link) and reports
+  "The laser connects but isn't responding. Turn it off and on again." in the menu and device status.
+- Logs connections, notification setup, write errors and raw incoming bytes for troubleshooting.
+
 ## 0.1.1 — 2026-11-12
 
 First published release. Same as 0.1.0, whose release build failed; the universal app is now

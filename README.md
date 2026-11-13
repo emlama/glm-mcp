@@ -82,7 +82,9 @@ Any other MCP client that speaks Streamable HTTP can use the URL directly ("Copy
 | `wait_for_measurement` | Waits (up to 55 s) for the next button press and returns that reading. |
 | `list_measurements` | History, newest first. Optional `since` (ISO time or reading id) and `limit`. |
 | `get_device_status` | Connection state, current mode, last data time. |
-| `trigger_measurement` | Fires the laser remotely. Not supported by every model; returns an error if not. |
+| `trigger_measurement` | Fires the laser remotely and returns the reading. Works on the GLM 50 C; returns an error on models that don't support it. |
+| `set_laser_pointer` | Turns the red aiming dot on or off (`on`: true/false), e.g. to show where the laser points. |
+| `set_backlight` | Turns the display backlight on or off (`on`: true/false). |
 
 A reading looks like:
 
@@ -113,6 +115,8 @@ the menu archives it to a dated file.
 
 - **Stuck on "Searching for laser…":** make sure the GLM's Bluetooth icon is on and the phone app
   isn't connected. Toggle the GLM's Bluetooth off and on.
+- **"The laser connects but isn't responding":** the laser sometimes gets stuck after its
+  Bluetooth link drops: it still accepts connections but sends nothing. Turn it off and on again.
 - **"Bluetooth permission denied":** System Settings → Privacy & Security → Bluetooth → enable GLM MCP.
 - **"MCP server couldn't start":** another copy of the app is running, or something else uses port 47650.
 - **See raw Bluetooth frames:**

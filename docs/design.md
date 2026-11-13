@@ -98,7 +98,25 @@ Unknown types are stored and returned with their raw values and `kind: "unknown"
 
 ### Remote trigger (optional)
 
-`c0 56 01 00 1e` written twice fires a measurement on the GLM 120 C. One report says a similar Bosch 50C model does not support it. It is untested on either GLM 50 C variant. Expose it only if a probe shows it works on the connected device (see tools).
+`c0 56 01 00 1e` written twice fires a measurement on the GLM 120 C. One report says a similar Bosch 50C model does not support it. Expose it only if a probe shows it works on the connected device (see tools).
+
+**Verified on the original GLM 50 C (2026-11-12):** the trigger works. The device sends a laser event, then a normal reading frame in its current mode, which the store records like a button press. Untested on the 50-27 C/CG.
+
+### Other commands (verified on the original GLM 50 C, 2026-11-12)
+
+The older Classic-Bluetooth command set (as documented by philipptrenz/BOSCH-GLM-rangefinder for the GLM 100 C) also works over the BLE serial-pipe characteristic. Replies to these use a short format, `<status> <length> <payload…> <checksum>`, separate from the 20-byte push frames; `00 00 82` is "OK, no payload".
+
+| Command | Bytes | Reply | Observed effect |
+|---|---|---|---|
+| Laser pointer on | `c0 41 00 96` | `00 00 82` | Red dot on. No laser event frame is pushed. |
+| Laser pointer off | `c0 42 00 1e` | `00 00 82` | Red dot off. |
+| Backlight on | `c0 47 00 20` | `00 00 82` | Display backlight on. |
+| Backlight off | `c0 48 00 62` | `00 00 82` | Display backlight off. |
+| Measure (silent) | `c0 40 00 ee` | `00 04 <u32 LE> <crc>` | Returns a distance in 0.05 mm units without a push frame. One sample read 9.05 cm where the trigger read 19.46 cm, about the device's length less: likely measured from the front edge. Unconfirmed. |
+
+### Stuck device (observed 2026-11-12)
+
+After a link supervision timeout, the device kept accepting connections and GATT writes (no errors, notifications enabled) but never acknowledged auto-sync or pushed frames, even while the user measured. This lasted at least 14 minutes over a dozen reconnects. Power-cycling the device cleared it. No remote command is known to recover it; whether the commands above wake it is untested.
 
 ### Keepalive and reconnect
 
@@ -163,6 +181,12 @@ Tool descriptions matter: they are how Claude knows to call these when the user 
 **`trigger_measurement`** (only listed if supported)
 - Fires the laser remotely and returns the resulting reading (like `wait_for_measurement`).
 - Always listed, with a description saying it may not be supported. On first call, attempt the trigger. If no reading arrives within 5 s, mark it unsupported; later calls return "not supported on this device" immediately. (Changed during planning: removing the tool via `tools/list_changed` across live HTTP sessions wasn't worth the complexity.)
+
+**`set_laser_pointer`**, **`set_backlight`** (added 2026-11-12)
+- Input: `on` (boolean, required).
+- Sends the matching command from "Other commands" and waits up to 2 s for the device's `00 00 82` OK. Errors: not connected, or no answer (ask the user to power-cycle the laser).
+
+**Stuck detection.** Two connections in a row that reach "connected" but receive no bytes at all mark the device as stuck. Status `detail` then reads "The laser connects but isn't responding. Turn it off and on again." until any data arrives.
 
 All tool results are JSON text content with readings in the store's shape, values in metres with a convenience `value_display` (e.g. `"2.271 m (89.4 in)"`) so Claude can speak either unit.
 

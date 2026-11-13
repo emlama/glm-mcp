@@ -46,6 +46,8 @@ public struct DeviceStatus: Codable, Sendable, Equatable {
 
 public enum DeviceError: Error, Sendable {
     case notConnected
+    /// The device took the command but never acknowledged it.
+    case noResponse
 }
 
 /// What the MCP tools need from the device link.
@@ -54,4 +56,7 @@ public protocol DeviceControl: Sendable {
     /// Fires the laser remotely. Throws `DeviceError.notConnected` when not connected.
     func trigger() async throws
     func markTrigger(_ support: TriggerSupport) async
+    /// Sends a control command and waits for the device's OK.
+    /// Throws `DeviceError.notConnected` or `DeviceError.noResponse`.
+    func send(_ command: DeviceCommand) async throws
 }

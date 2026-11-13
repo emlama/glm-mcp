@@ -7,6 +7,8 @@ import Testing
 actor FakeDevice: DeviceControl {
     var current = DeviceStatus(state: .connected, deviceName: "Bosch GLM50C x1234", profile: "serial_pipe")
     var triggerCount = 0
+    var sent: [DeviceCommand] = []
+    var sendError: DeviceError?
     /// Appended to the store when trigger() is called, if set.
     var onTrigger: (MeasurementStore, Reading)?
 
@@ -18,6 +20,11 @@ actor FakeDevice: DeviceControl {
         }
     }
     func markTrigger(_ s: TriggerSupport) { current.triggerSupported = s }
+    func send(_ command: DeviceCommand) async throws {
+        if let sendError { throw sendError }
+        sent.append(command)
+    }
+    func setSendError(_ e: DeviceError?) { sendError = e }
     func set(_ s: LinkState) { current.state = s }
     func setOnTrigger(_ v: (MeasurementStore, Reading)) { onTrigger = v }
 }
@@ -49,9 +56,10 @@ private func text(_ r: CallTool.Result) -> String {
     return ""
 }
 
-@Test func listsFiveTools() {
+@Test func listsTools() {
     #expect(GLMTools.tools.map(\.name) == [
         "get_latest_measurement", "wait_for_measurement", "list_measurements", "get_device_status", "trigger_measurement",
+        "set_laser_pointer", "set_backlight",
     ])
 }
 
@@ -174,4 +182,47 @@ private func text(_ r: CallTool.Result) -> String {
     let t = text(await tools.call(name: "get_latest_measurement", arguments: nil))
     #expect(t.contains("0.7758") && t.contains("0.6793"))
     #expect(!t.contains("0.77580000"))
+}
+
+@Test func laserPointerOnAndOff() async throws {
+    let (tools, _, device) = try setup()
+    let on = await tools.call(name: "set_laser_pointer", arguments: ["on": .bool(true)])
+    let off = await tools.call(name: "set_laser_pointer", arguments: ["on": .bool(false)])
+    #expect(on.isError == false && off.isError == false)
+    #expect(json(on)["laser_pointer"] as? String == "on")
+    #expect(json(off)["laser_pointer"] as? String == "off")
+    #expect(await device.sent == [.laserOn, .laserOff])
+}
+
+@Test func backlightOnAndOff() async throws {
+    let (tools, _, device) = try setup()
+    let on = await tools.call(name: "set_backlight", arguments: ["on": .bool(true)])
+    _ = await tools.call(name: "set_backlight", arguments: ["on": .bool(false)])
+    #expect(json(on)["backlight"] as? String == "on")
+    #expect(await device.sent == [.backlightOn, .backlightOff])
+}
+
+@Test func switchToolsRequireOn() async throws {
+    let (tools, _, device) = try setup()
+    let missing = await tools.call(name: "set_laser_pointer", arguments: nil)
+    let wrongType = await tools.call(name: "set_backlight", arguments: ["on": .string("maybe")])
+    #expect(missing.isError == true && wrongType.isError == true)
+    #expect(await device.sent.isEmpty)
+}
+
+@Test func switchToolsReportNotConnected() async throws {
+    let (tools, _, device) = try setup()
+    await device.set(.scanning)
+    await device.setSendError(.notConnected)
+    let r = await tools.call(name: "set_laser_pointer", arguments: ["on": .bool(true)])
+    #expect(r.isError == true)
+    #expect(text(r).contains("not connected"))
+}
+
+@Test func switchToolsReportNoResponse() async throws {
+    let (tools, _, device) = try setup()
+    await device.setSendError(.noResponse)
+    let r = await tools.call(name: "set_backlight", arguments: ["on": .bool(true)])
+    #expect(r.isError == true)
+    #expect(text(r).contains("off and on"))
 }

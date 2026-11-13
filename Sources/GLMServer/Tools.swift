@@ -52,6 +52,24 @@ public struct GLMTools: Sendable {
             description: "Fire the laser remotely and return the reading. May not be supported on this device; if unsupported it returns an error right away.",
             inputSchema: .object(["type": "object", "properties": .object([:])])
         ),
+        Tool(
+            name: "set_laser_pointer",
+            description: "Turn the laser measure's red aiming dot on or off, e.g. so the user can see where it points before measuring. Args: on (boolean).",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object(["on": .object(["type": "boolean", "description": "true to turn the dot on, false to turn it off."])]),
+                "required": .array([.string("on")]),
+            ])
+        ),
+        Tool(
+            name: "set_backlight",
+            description: "Turn the laser measure's display backlight on or off. Args: on (boolean).",
+            inputSchema: .object([
+                "type": "object",
+                "properties": .object(["on": .object(["type": "boolean", "description": "true to turn the backlight on, false to turn it off."])]),
+                "required": .array([.string("on")]),
+            ])
+        ),
     ]
 
     public func call(name: String, arguments: [String: Value]?) async -> CallTool.Result {
@@ -68,6 +86,12 @@ public struct GLMTools: Sendable {
             return await list(since: args["since"]?.stringValue, limit: limit)
         case "get_device_status": return await respond([:])
         case "trigger_measurement": return await triggerMeasurement()
+        case "set_laser_pointer":
+            guard case .bool(let on)? = args["on"] else { return error("on must be true or false.") }
+            return await send(on ? .laserOn : .laserOff, field: "laser_pointer", on: on)
+        case "set_backlight":
+            guard case .bool(let on)? = args["on"] else { return error("on must be true or false.") }
+            return await send(on ? .backlightOn : .backlightOff, field: "backlight", on: on)
         default: return error("Unknown tool: \(name)")
         }
     }
@@ -125,6 +149,17 @@ public struct GLMTools: Sendable {
         }
         await device.markTrigger(.supported)
         return await respond(["reading": object(r, withAge: true)])
+    }
+
+    private func send(_ command: DeviceCommand, field: String, on: Bool) async -> CallTool.Result {
+        do {
+            try await device.send(command)
+        } catch DeviceError.noResponse {
+            return error("The laser measure did not answer. Ask the user to turn it off and on again.")
+        } catch {
+            return self.error("The laser measure is not connected (state: \(await device.status().state.rawValue)).")
+        }
+        return await respond([field: on ? "on" : "off"])
     }
 
     // MARK: - JSON

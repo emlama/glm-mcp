@@ -20,6 +20,8 @@ public final class BLELink: NSObject, DeviceControl, @unchecked Sendable {
 
     static let keepaliveIdle: TimeInterval = 30
     static let keepaliveGrace: TimeInterval = 10
+    static let replyTimeout: TimeInterval = 2
+    static let stuckMessage = "The laser connects but isn't responding. Turn it off and on again."
 
     public let statusUpdates: AsyncStream<DeviceStatus>
     private let statusContinuation: AsyncStream<DeviceStatus>.Continuation
@@ -39,6 +41,10 @@ public final class BLELink: NSObject, DeviceControl, @unchecked Sendable {
     /// True while waiting on a connect to the remembered peripheral; scanning continues meanwhile
     /// so a different GLM (or the same one under a new identifier) can still be found.
     private var pendingKnown = false
+    private var health = LinkHealth()
+    /// Waiter for the reply to a control command; `pendingToken` identifies it for the timeout.
+    private var pendingReply: CheckedContinuation<Void, Error>?
+    private var pendingToken: UUID?
 
     public init(store: MeasurementStore) {
         (statusUpdates, statusContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -83,6 +89,33 @@ public final class BLELink: NSObject, DeviceControl, @unchecked Sendable {
         queue.sync { update { $0.triggerSupported = support } }
     }
 
+    public func send(_ command: DeviceCommand) async throws {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            queue.async { [self] in
+                guard current.state == .connected, let p = peripheral, let c = characteristic else {
+                    return cont.resume(throwing: DeviceError.notConnected)
+                }
+                // One command at a time; a newer one supersedes an unanswered older one.
+                finishReply(throwing: DeviceError.noResponse)
+                let token = UUID()
+                pendingReply = cont
+                pendingToken = token
+                p.writeValue(command.bytes, for: c, type: .withResponse)
+                queue.asyncAfter(deadline: .now() + Self.replyTimeout) { [weak self] in
+                    guard let self, self.pendingToken == token else { return }
+                    self.finishReply(throwing: DeviceError.noResponse)
+                }
+            }
+        }
+    }
+
+    private func finishReply(throwing error: Error? = nil) {
+        guard let cont = pendingReply else { return }
+        pendingReply = nil
+        pendingToken = nil
+        if let error { cont.resume(throwing: error) } else { cont.resume() }
+    }
+
     // MARK: - State
 
     private func update(_ change: (inout DeviceStatus) -> Void) {
@@ -94,7 +127,7 @@ public final class BLELink: NSObject, DeviceControl, @unchecked Sendable {
         guard central.state == .poweredOn else { return }
         update {
             $0.state = .scanning
-            $0.detail = nil
+            $0.detail = health.isStuck ? Self.stuckMessage : nil
         }
         if let idString = UserDefaults.standard.string(forKey: Self.lastPeripheralKey),
            let id = UUID(uuidString: idString),
@@ -126,13 +159,20 @@ public final class BLELink: NSObject, DeviceControl, @unchecked Sendable {
         parser = FrameParser()
         keepaliveSentAt = nil
         pendingKnown = false
+        finishReply(throwing: DeviceError.notConnected)
     }
 
     private func scheduleReconnect() {
+        // Only links that got as far as subscribing count towards spotting a stuck device.
+        if current.state == .connected {
+            health.connectionEnded()
+            if health.isStuck { log.info("device connects but stays silent; reporting it as stuck") }
+        }
         resetLink()
         update {
             $0.state = .scanning
             $0.profile = nil
+            $0.detail = health.isStuck ? Self.stuckMessage : nil
         }
         let delay = backoff
         backoff = min(backoff * 2, 5)
@@ -161,7 +201,15 @@ public final class BLELink: NSObject, DeviceControl, @unchecked Sendable {
 
     private func handle(_ data: Data) {
         let now = Date()
-        update { $0.lastDataAt = now }
+        health.dataReceived()
+        update {
+            $0.lastDataAt = now
+            if $0.detail == Self.stuckMessage { $0.detail = nil }
+        }
+        if let reply = DeviceReply(data), reply.payload.isEmpty {
+            finishReply(throwing: reply.status == 0 ? nil : DeviceError.noResponse)
+            return
+        }
         for frame in parser.feed(data) {
             log.debug("frame \(frame.raw.hexString, privacy: .public)")
             switch interpret(frame, deviceName: current.deviceName ?? "Bosch GLM", at: now) {
@@ -219,6 +267,7 @@ extension BLELink: CBCentralManagerDelegate {
     }
 
     public func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
+        log.info("connected to \(p.identifier.uuidString, privacy: .public)")
         update { $0.state = .connecting }
         p.discoverServices(nil)
     }
@@ -258,6 +307,7 @@ extension BLELink: CBPeripheralDelegate {
     }
 
     public func peripheral(_ p: CBPeripheral, didUpdateNotificationStateFor c: CBCharacteristic, error: Error?) {
+        log.info("notify \(c.uuid.uuidString, privacy: .public) on=\(c.isNotifying) error=\(error?.localizedDescription ?? "none", privacy: .public)")
         guard c == characteristic, c.isNotifying else { return }
         p.writeValue(Self.autoSync, for: c, type: .withResponse)
         UserDefaults.standard.set(p.identifier.uuidString, forKey: Self.lastPeripheralKey)
@@ -269,8 +319,14 @@ extension BLELink: CBPeripheralDelegate {
         }
     }
 
+    public func peripheral(_ p: CBPeripheral, didWriteValueFor c: CBCharacteristic, error: Error?) {
+        guard let error else { return }
+        log.info("write failed: \(error.localizedDescription, privacy: .public)")
+    }
+
     public func peripheral(_ p: CBPeripheral, didUpdateValueFor c: CBCharacteristic, error: Error?) {
         guard let data = c.value else { return }
+        log.info("rx \(data.hexString, privacy: .public)")
         handle(data)
     }
 }

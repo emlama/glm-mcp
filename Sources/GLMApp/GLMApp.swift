@@ -61,11 +61,12 @@ final class AppModel {
 
     var statusLine: String {
         let name = status.deviceName ?? "Bosch GLM"
+        if let detail = status.detail { return detail }
         switch status.state {
         case .connected: return "\(name) — Connected"
         case .connecting: return "\(name) — Connecting…"
         case .scanning: return "Searching for laser…"
-        case .off: return status.detail ?? "Bluetooth unavailable"
+        case .off: return "Bluetooth unavailable"
         }
     }
 
