@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-11-12
 
 - New tools `set_laser_pointer` and `set_backlight` (on/off). Both wait for the laser to acknowledge.
 - `trigger_measurement` confirmed working on the original GLM 50 C.

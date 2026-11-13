@@ -75,7 +75,7 @@ public actor MCPHTTPServer {
         self.serverFactory = { _, _ in
             let server = Server(
                 name: "glm-mcp",
-                version: "0.1.1",
+                version: "0.2.0",
                 capabilities: .init(tools: .init(listChanged: false))
             )
             await server.withMethodHandler(ListTools.self) { _ in .init(tools: GLMTools.tools) }
